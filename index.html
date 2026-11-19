@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Easy ML Demo: Cars + Flowers (ONNX)</title>
+
+<!-- onnxruntime-web = lets the browser run ONNX models. no server needed. -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.1/dist/ort.min.js"></script>
+
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; background: #fafafa; color: #222; }
+  h1 { font-size: 1.5rem; }
+  .tabs button { padding: 8px 16px; margin-right: 6px; border: 1px solid #999; background: #eee; cursor: pointer; border-radius: 6px; }
+  .tabs button.on { background: #333; color: #fff; }
+  .panel { display: none; background: #fff; border: 1px solid #ddd; padding: 16px; margin-top: 12px; border-radius: 8px; }
+  .panel.on { display: block; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+  label { font-size: 0.8rem; display: block; }
+  input { width: 100%; box-sizing: border-box; padding: 4px; }
+  .go { margin-top: 12px; padding: 10px 20px; font-size: 1rem; cursor: pointer; }
+  .answer { margin-top: 12px; font-size: 1.3rem; font-weight: bold; }
+  .small { font-size: 0.85rem; color: #555; }
+  .bar { height: 14px; background: #4a7; border-radius: 3px; margin: 2px 0 8px; }
+  #reg-buttons { margin-bottom: 10px; }
+  .row { font-size: 0.9rem; font-weight: normal; }
+</style>
+</head>
+<body>
+
+<h1>Demo</h1>
+<p class="small">Two PyTorch models exported to ONNX and running right here in your browser. No server, no magic.</p>
+
+<div class="tabs">
+  <button id="tab-reg" class="on" onclick="showTab('reg')">Regression (Car mileage)</button>
+  <button id="tab-cls" onclick="showTab('cls')">Classification (Iris flower)</button>
+</div>
+
+<!-- REGRESSION PANEL -->
+<div id="panel-reg" class="panel on">
+  <h2>Guess the gas mileage of a car</h2>
+  <p class="small">Describe a car from the 1970s or early 1980s and the model guesses how many miles it goes on one gallon of gas. Heavy car with a big engine = drinks gas. Light car with a small engine = sips gas.</p>
+  <div id="reg-buttons"></div>
+  <div id="reg-inputs" class="grid"></div>
+  <button class="go" onclick="predictReg()">Predict</button>
+  <div id="reg-answer" class="answer"></div>
+</div>
+
+<!-- CLASSIFICATION PANEL -->
+<div id="panel-cls" class="panel">
+  <h2>Which iris flower is it?</h2>
+  <p class="small">4 flower measurements (in cm) go in, one of 3 flower types comes out. Press a button to load a real example, or type your own.</p>
+  <div id="cls-buttons"></div>
+  <div id="cls-inputs" class="grid" style="margin-top:10px"></div>
+  <button class="go" onclick="predictCls()">Predict</button>
+  <div id="cls-answer" class="answer"></div>
+</div>
+
+<script>
+// ---------- tab switching (hide one box, show the other) ----------
+function showTab(which) {
+  for (const t of ['reg', 'cls']) {
+    document.getElementById('panel-' + t).classList.toggle('on', t === which);
+    document.getElementById('tab-' + t).classList.toggle('on', t === which);
+  }
+}
+
+let regSession, clsSession;   // the ONNX brains
+let regScaler, clsScaler;     // the squishing rules (mean + scale)
+
+// plain-English hints for the column names (other names just show as they are)
+const HINTS = {
+  cylinders: 'cylinders (3 to 8)', displacement: 'displacement (engine size, cubic inches)',
+  horsepower: 'horsepower', weight: 'weight (pounds)', acceleration: 'acceleration (seconds, 0 to 60 mph)',
+  model_year: 'model_year (70 = 1970)', origin: 'origin (1 = USA, 2 = Europe, 3 = Japan)',
+  sepal_length_cm: 'sepal length (cm)', sepal_width_cm: 'sepal width (cm)',
+  petal_length_cm: 'petal length (cm)', petal_width_cm: 'petal width (cm)'
+};
+
+function tidy(v) { return parseFloat(Number(v).toPrecision(6)); }   // 20.940000534 -> 20.94
+
+// make one number box per feature
+function buildInputs(divId, scaler) {
+  const div = document.getElementById(divId);
+  div.innerHTML = '';
+  scaler.names.forEach((name, i) => {
+    const box = document.createElement('div');
+    box.innerHTML = '<label>' + (HINTS[name] || name) + '</label><input type="number" step="any" id="' + divId + '-' + i + '" value="' + tidy(scaler.mean[i]) + '">';
+    div.appendChild(box);
+  });
+}
+
+// read the boxes, then squish like python did: (x - mean) / scale
+function readAndScale(divId, scaler) {
+  return scaler.names.map((_, i) => {
+    const raw = parseFloat(document.getElementById(divId + '-' + i).value);
+    return (raw - scaler.mean[i]) / scaler.scale[i];
+  });
+}
+
+async function init() {
+  try {
+    regScaler = await (await fetch('regression_scaler.json')).json();
+    clsScaler = await (await fetch('classification_scaler.json')).json();
+    buildInputs('reg-inputs', regScaler);
+    buildInputs('cls-inputs', clsScaler);
+
+    // regression demo button (only if the json has an example car)
+    if (regScaler.example) {
+      const rb = document.createElement('button');
+      rb.textContent = 'Load a real example car';
+      rb.onclick = loadRegExample;
+      document.getElementById('reg-buttons').appendChild(rb);
+    }
+
+    // one demo button per flower type
+    const btns = document.getElementById('cls-buttons');
+    clsScaler.classes.forEach((c, k) => {
+      const b = document.createElement('button');
+      b.textContent = 'Load example: ' + c;
+      b.style.marginRight = '6px';
+      b.onclick = () => loadExample(k);
+      btns.appendChild(b);
+    });
+
+    regSession = await ort.InferenceSession.create('regression_model.onnx');
+    clsSession = await ort.InferenceSession.create('classification_model.onnx');
+  } catch (e) {
+    const msg = 'Could not load the model files. Run the Colab notebooks, then put the 4 downloaded files (2 .onnx + 2 .json) in this folder. (' + e + ')';
+    document.getElementById('reg-answer').textContent = msg;
+    document.getElementById('cls-answer').textContent = msg;
+  }
+}
+
+// ---------- regression: one number out ----------
+function loadRegExample() {
+  regScaler.example.forEach((v, i) => { document.getElementById('reg-inputs-' + i).value = tidy(v); });
+  document.getElementById('reg-answer').textContent = 'Loaded. (The real mileage for this one was ' + tidy(regScaler.example_actual) + ' ' + regScaler.unit + ')';
+}
+
+async function predictReg() {
+  const out = document.getElementById('reg-answer');
+  if (!regSession) { out.textContent = 'Model still loading, chill.'; return; }
+  const scaled = readAndScale('reg-inputs', regScaler);
+  const tensor = new ort.Tensor('float32', Float32Array.from(scaled), [1, scaled.length]);
+  const result = await regSession.run({ features: tensor });   // "features" must match the python export name
+  // the brain answers in squished units, so un-squish: answer * scale + mean
+  const mpg = result.prediction.data[0] * regScaler.target_scale + regScaler.target_mean;
+  out.textContent = 'Predicted ' + regScaler.target.toLowerCase() + ': ' + mpg.toFixed(1) + ' ' + regScaler.unit;
+}
+
+// ---------- classification: 3 logits out, softmax turns them into probabilities ----------
+function softmax(arr) {
+  const m = Math.max(...arr);
+  const e = arr.map(v => Math.exp(v - m));
+  const sum = e.reduce((a, b) => a + b, 0);
+  return e.map(v => v / sum);
+}
+
+function loadExample(k) {
+  clsScaler.examples[k].forEach((v, i) => { document.getElementById('cls-inputs-' + i).value = tidy(v); });
+  document.getElementById('cls-answer').textContent = '';
+}
+
+async function predictCls() {
+  const out = document.getElementById('cls-answer');
+  if (!clsSession) { out.textContent = 'Model still loading, chill.'; return; }
+  const scaled = readAndScale('cls-inputs', clsScaler);
+  const tensor = new ort.Tensor('float32', Float32Array.from(scaled), [1, scaled.length]);
+  const result = await clsSession.run({ features: tensor });
+  const probs = softmax(Array.from(result.logits.data));
+  const best = probs.indexOf(Math.max(...probs));          // biggest probability wins
+
+  let html = clsScaler.classes[best] + '<div style="margin-top:8px">';
+  probs.forEach((p, k) => {
+    html += '<div class="row">' + clsScaler.classes[k] + ': ' + (p * 100).toFixed(1) + '%</div>' +
+            '<div class="bar" style="width:' + (p * 100) + '%"></div>';
+  });
+  out.innerHTML = html + '</div>';
+}
+
+init();
+</script>
+</body>
+</html>
