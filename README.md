@@ -1,27 +1,37 @@
-# Cars + Flowers: the dumb version
+# Cars + Flowers
 
-Same layout as the example you were given:
+## Project Files
 
-```
+```text
 CarsAndFlowers/
-  Regression_AutoMPG_Colab.ipynb       <- guess a car's MPG (number)
-  Classification_Iris_Colab.ipynb      <- guess an iris type (group)
-  docs/index.html                      <- the website (already written)
+├── Regression_AutoMPG_Colab.ipynb
+├── Classification_Iris_Colab.ipynb
+└── docs/
+    └── index.html
 ```
 
-## Do this
-1. Open each notebook in Google Colab and press Runtime -> Run all.
-2. Each notebook downloads 2 files at the end:
+## Steps
+
+1. Open both notebooks in Google Colab.
+2. Click **Runtime → Run all**.
+3. Download the two files from each notebook:
    - Regression: `regression_model.onnx` and `regression_scaler.json`
    - Classification: `classification_model.onnx` and `classification_scaler.json`
-3. Put those 4 files inside `docs/`, next to `index.html`.
-4. Test on your laptop: open a terminal in `docs/` and run `python -m http.server 8000`, then go to http://localhost:8000
-5. Make a public GitHub repo and upload everything.
-6. Repo -> Settings -> Pages -> Deploy from a branch -> `main` -> `/docs` -> Save.
-7. Your site is live at `https://YOUR-USERNAME.github.io/REPO-NAME/`.
+4. Put all four files inside the `docs/` folder.
+5. Upload the project to a public GitHub repository.
+6. Go to **Settings → Pages**.
+7. Select **Deploy from a branch**, choose `main` and `/docs`, then click **Save**.
 
-Double-clicking `index.html` will NOT work (the browser blocks loading the model from a plain file). Use the local server or GitHub Pages.
+Your website will be available through GitHub Pages.
 
-## The 3 students per project
-Small [16] (or [8]), Medium [64,32], Large [128,64,32]. The notebook prints a scoreboard and automatically exports the winner.
-Scores: R2 (plus MAE, RMSE) for cars. Accuracy, Precision, Recall and F1 (plus confusion matrix and correlation matrix) for flowers.
+## Models
+
+Each notebook compares three models:
+
+- Small: `[16]`
+- Medium: `[64, 32]`
+- Large: `[128, 64, 32]`
+
+The regression notebook predicts car MPG.
+
+The classification notebook predicts the iris flower type.
